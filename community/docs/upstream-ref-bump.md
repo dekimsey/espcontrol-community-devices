@@ -116,6 +116,32 @@ per board. Read the advisories at bump time — step 3 below.
    device that newly adopted a feature (see the upstream PR's own testing
    notes for what to check).
 
+## Installing a preview for hardware testing
+
+A `-preview.N` release is not advertised by the stable OTA manifest, but is
+available for deliberate installation from the firmware history picker. To
+install its device-specific OTA image from a shell, run from a clean checkout
+of the same tag (so ESPHome reads that build's OTA configuration):
+
+```bash
+TAG=community-v0.13.1-upstream.v2.11.2-preview.1
+DEVICE=guition-esp32-s3-jc3248w535  # use the exact device slug for the panel
+DEVICE_IP=YOUR_DEVICE_IP             # e.g. the panel's LAN address
+BIN="$(mktemp)"
+trap 'rm -f "$BIN"' EXIT
+
+curl --fail --location \
+  "https://github.com/lamiskin/espcontrol-community-devices/releases/download/${TAG}/${DEVICE}.ota.bin" \
+  --output "$BIN"
+esphome upload "devices/${DEVICE}/esphome.yaml" \
+  --device "$DEVICE_IP" --file "$BIN"
+```
+
+`curl` only downloads the binary; `esphome upload` performs the native OTA
+transfer using the selected device config. This targets only the supplied IP.
+Do not use a different device's artifact. A preview remains manually selectable
+in firmware history but is never offered as an automatic OTA update.
+
 ## When a catalog flag needs setting
 
 Set it in `community/catalog-fragment.json` under the device's
