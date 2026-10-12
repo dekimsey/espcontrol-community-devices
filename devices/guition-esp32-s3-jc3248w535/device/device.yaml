@@ -183,9 +183,10 @@ api:
   max_connections: 3
   max_send_queue: 12
 
-# The JC3248W535 USB-C port is connected to the ESP32-S3 native USB (CDC).
+# Use native USB Serial/JTAG for logging; this transport is compatible with
+# Improv provisioning on the ESP32-S3.
 logger:
-  hardware_uart: USB_CDC
+  hardware_uart: USB_SERIAL_JTAG
 
 wifi:
   use_psram: true
