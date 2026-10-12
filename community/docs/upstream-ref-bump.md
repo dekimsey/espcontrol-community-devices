@@ -120,27 +120,38 @@ per board. Read the advisories at bump time — step 3 below.
 
 A `-preview.N` release is not advertised by the stable OTA manifest, but is
 available for deliberate installation from the firmware history picker. To
-download its device-specific OTA image and upload it directly to the panel:
+download and OTA-upload its device-specific image, use the device's exact
+catalog slug and IP. The `/update` endpoint is the ESPHome web-server OTA
+handler inherited by the composed firmware; the multipart field is `file`:
 
 ```bash
 TAG=community-v0.13.1-upstream.v2.11.2-preview.1
-DEVICE=guition-esp32-s3-jc3248w535  # use the exact device slug for the panel
-DEVICE_IP=YOUR_DEVICE_IP             # e.g. the panel's LAN address
+DEVICE=guition-esp32-s3-jc3248w535 # replace with the panel's exact slug
+DEVICE_IP=YOUR_DEVICE_IP            # replace with the panel's LAN IP
+PAGES_BASE=https://lamiskin.github.io/espcontrol-community-devices
 BIN="$(mktemp)"
 trap 'rm -f "$BIN"' EXIT
 
 curl --fail --location --output "$BIN" \
-  "https://lamiskin.github.io/espcontrol-community-devices/firmware/${DEVICE}/history/${TAG}/${DEVICE}.ota.bin"
+  "${PAGES_BASE}/firmware/${DEVICE}/history/${TAG}/${DEVICE}.ota.bin"
 curl --fail --form "file=@${BIN}" \
   "http://${DEVICE_IP}/update"
 ```
 
-The upload uses the ESPHome web-server OTA handler at `/update` with multipart
-field `file`. This requires a firmware build that exposes that endpoint; it is
-separate from the native ESPHome OTA protocol. The upload is plain HTTP, so only
-use it on a trusted LAN. It targets only the supplied IP. Do not use a different
-device's artifact. A preview remains manually selectable in firmware history
-but is never offered as an automatic OTA update.
+This is a plain-HTTP upload to one device. Only use it on a trusted LAN, and
+only when the currently installed firmware exposes `/update`.
+
+For discovery and a confirmation-gated update to the latest published release
+(including previews), the repository helper accepts just the target IP:
+
+```bash
+python3 community/scripts/update_device.py --dry-run YOUR_DEVICE_IP
+python3 community/scripts/update_device.py YOUR_DEVICE_IP
+```
+
+The helper resolves the model from ESPHome's DNS-SD import URL, checks the
+release manifest and OTA checksum, warns when the newest release is a preview,
+asks before uploading, and verifies the device version after reboot.
 
 ## When a catalog flag needs setting
 
