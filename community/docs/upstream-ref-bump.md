@@ -116,18 +116,19 @@ per board. Read the advisories at bump time — step 3 below.
    device that newly adopted a feature (see the upstream PR's own testing
    notes for what to check).
 
-## Testing a preview on one device
+## Installing a preview for hardware testing
 
-To download and OTA-upload a device-specific preview directly, use the
-device's exact catalog slug and IP. The `/update` endpoint is the ESPHome
-web-server OTA handler inherited by the composed firmware; the multipart field
-is `file`:
+A `-preview.N` release is not advertised by the stable OTA manifest, but is
+available for deliberate installation from the firmware history picker. To
+download and OTA-upload its device-specific image, use the device's exact
+catalog slug and IP. The `/update` endpoint is the ESPHome web-server OTA
+handler inherited by the composed firmware; the multipart field is `file`:
 
 ```bash
 TAG=community-v0.13.1-upstream.v2.11.2-preview.1
-DEVICE=guition-esp32-s3-jc3248w535  # replace with the panel's exact slug
-DEVICE_IP=YOUR_DEVICE_IP             # replace with the panel's LAN IP
-PAGES_BASE=YOUR_GITHUB_PAGES_BASE_URL
+DEVICE=guition-esp32-s3-jc3248w535 # replace with the panel's exact slug
+DEVICE_IP=YOUR_DEVICE_IP            # replace with the panel's LAN IP
+PAGES_BASE=https://lamiskin.github.io/espcontrol-community-devices
 BIN="$(mktemp)"
 trap 'rm -f "$BIN"' EXIT
 
