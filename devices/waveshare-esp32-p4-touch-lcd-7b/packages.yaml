@@ -115,6 +115,7 @@ packages:
     refresh: 1d
     files:
       - common/theme/button.yaml
+      - common/theme/colors.yaml
       - common/config/colors.yaml
       - common/config/button_order.yaml
       - common/config/display.yaml
