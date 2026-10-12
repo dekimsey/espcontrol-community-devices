@@ -191,15 +191,21 @@ jobs:
           retry python3 community/scripts/assemble.py --skip-web
       - name: Include parity report
         id: parity
-        continue-on-error: true
         env:
           UPSTREAM_CLONE: .assembly
         run: |
+          set +e
+          report=$(python3 community/scripts/check_include_parity.py 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$report"
+          delimiter="$(python3 -c 'import uuid; print(uuid.uuid4())')"
           {
-            echo "report<<EOF"
-            python3 community/scripts/check_include_parity.py 2>&1
-            echo "EOF"
+            echo "report<<$delimiter"
+            printf '%s\n' "$report"
+            echo "$delimiter"
           } >> $GITHUB_OUTPUT
+          exit "$status"
 
   # Runs the esphome compiler — the highest-risk third-party code execution
   # in this pipeline (it fetches and runs platformio toolchains). No
