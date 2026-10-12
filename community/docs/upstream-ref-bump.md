@@ -120,8 +120,7 @@ per board. Read the advisories at bump time — step 3 below.
 
 A `-preview.N` release is not advertised by the stable OTA manifest, but is
 available for deliberate installation from the firmware history picker. To
-install its device-specific OTA image from a shell, run from a clean checkout
-of the same tag (so ESPHome reads that build's OTA configuration):
+download its device-specific OTA image and upload it directly to the panel:
 
 ```bash
 TAG=community-v0.13.1-upstream.v2.11.2-preview.1
@@ -130,17 +129,18 @@ DEVICE_IP=YOUR_DEVICE_IP             # e.g. the panel's LAN address
 BIN="$(mktemp)"
 trap 'rm -f "$BIN"' EXIT
 
-curl --fail --location \
-  "https://github.com/lamiskin/espcontrol-community-devices/releases/download/${TAG}/${DEVICE}.ota.bin" \
-  --output "$BIN"
-esphome upload "devices/${DEVICE}/esphome.yaml" \
-  --device "$DEVICE_IP" --file "$BIN"
+curl --fail --location --output "$BIN" \
+  "https://lamiskin.github.io/espcontrol-community-devices/firmware/${DEVICE}/history/${TAG}/${DEVICE}.ota.bin"
+curl --fail --form "file=@${BIN}" \
+  "http://${DEVICE_IP}/update"
 ```
 
-`curl` only downloads the binary; `esphome upload` performs the native OTA
-transfer using the selected device config. This targets only the supplied IP.
-Do not use a different device's artifact. A preview remains manually selectable
-in firmware history but is never offered as an automatic OTA update.
+The upload uses the ESPHome web-server OTA handler at `/update` with multipart
+field `file`. This requires a firmware build that exposes that endpoint; it is
+separate from the native ESPHome OTA protocol. The upload is plain HTTP, so only
+use it on a trusted LAN. It targets only the supplied IP. Do not use a different
+device's artifact. A preview remains manually selectable in firmware history
+but is never offered as an automatic OTA update.
 
 ## When a catalog flag needs setting
 
