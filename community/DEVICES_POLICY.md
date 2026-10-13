@@ -131,6 +131,7 @@ _global:
     - package-lock.json
     - .gitignore
     - community-pages/**
+    - AGENTS.md
     - README.md
     - .github/**
     - LICENSE
