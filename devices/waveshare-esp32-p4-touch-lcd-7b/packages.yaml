@@ -31,6 +31,11 @@ substitutions:
   sensor_value_font: font_number_value
   padding: 16px
   radius: 10px
+  # Card curve presets: Small is the 60% default from card_curve.h, Medium
+  # stays at this radius so upstream's new Card Curve select leaves
+  # existing dashboards looking the same.
+  card_curve_small_radius: 6px
+  card_curve_medium_radius: 10px
   main_page_card_gap: "10"
   main_page_pad_top: "42"
   main_page_compact_pad_top: "5"
