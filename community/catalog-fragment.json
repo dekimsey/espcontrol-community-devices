@@ -502,11 +502,11 @@
         "capabilityGaps": [
           {
             "feature": "Camera screensaver",
-            "reason": "The camera mode is refused on this panel: at upstream v2.13.0 its factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare). The code is compiled in, but the option is withheld."
+            "reason": "The camera mode is refused on this panel: its factory image fills 3897695 of the 3932160-byte flash partition (99.1%, 34465 bytes spare) at upstream v2.13.0, which leaves no margin to offer a feature this close to the size limit. The code is compiled in, but the option is withheld."
           },
           {
             "feature": "Weather forecast card",
-            "reason": "The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare) at upstream v2.13.0, and its runtime heap has not been measured with the forecast card and its details modal open."
+            "reason": "The forecast card is left out of this board's firmware (-DESPCONTROL_DISABLE_WEATHER_FORECAST) and is not offered in the web configurator: even without it the factory image fills 3897695 of the 3932160-byte flash partition (99.1%, 34465 bytes spare) at upstream v2.13.0, and the panel's runtime heap has not been measured with the forecast card and its details modal open."
           }
         ]
       }
@@ -1214,7 +1214,7 @@
           },
           {
             "feature": "Weather forecast card",
-            "reason": "The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it yet."
+            "reason": "The forecast card is left out of this board's firmware (-DESPCONTROL_DISABLE_WEATHER_FORECAST) and is not offered in the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it."
           }
         ],
         "public": {

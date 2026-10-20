@@ -24,10 +24,10 @@ This device has been verified on real hardware — it compiles, flashes, and run
 Confirmed by @mglev1n ([#62](https://github.com/lamiskin/espcontrol-community-devices/issues/62)) at `community-v0.1.2-upstream.v2.6.3`.
 :::
 ::: warning Camera screensaver not available
-The camera mode is refused on this panel: at upstream v2.13.0 its factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare). The code is compiled in, but the option is withheld.
+The camera mode is refused on this panel: its factory image fills 3897695 of the 3932160-byte flash partition (99.1%, 34465 bytes spare) at upstream v2.13.0, which leaves no margin to offer a feature this close to the size limit. The code is compiled in, but the option is withheld.
 :::
 ::: warning Weather forecast card not available
-The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare) at upstream v2.13.0, and its runtime heap has not been measured with the forecast card and its details modal open.
+The forecast card is left out of this board's firmware (-DESPCONTROL_DISABLE_WEATHER_FORECAST) and is not offered in the web configurator: even without it the factory image fills 3897695 of the 3932160-byte flash partition (99.1%, 34465 bytes spare) at upstream v2.13.0, and the panel's runtime heap has not been measured with the forecast card and its details modal open.
 :::
 
 |  |
