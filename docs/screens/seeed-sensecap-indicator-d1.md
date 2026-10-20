@@ -23,8 +23,11 @@ This device has been verified on real hardware — it compiles, flashes, and run
 
 Confirmed by @mglev1n ([#62](https://github.com/lamiskin/espcontrol-community-devices/issues/62)) at `community-v0.1.2-upstream.v2.6.3`.
 :::
-::: tip Full upstream feature parity
-This device supports the full upstream feature set — nothing is disabled or unavailable here.
+::: warning Camera screensaver not available
+The camera mode is refused on this panel: at upstream v2.13.0 its factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare). The code is compiled in, but the option is withheld.
+:::
+::: warning Weather forecast card not available
+The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare) at upstream v2.13.0, and its runtime heap has not been measured with the forecast card and its details modal open.
 :::
 
 |  |

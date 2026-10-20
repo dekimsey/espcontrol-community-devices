@@ -24,7 +24,13 @@ This device has been verified on real hardware — it compiles, flashes, and run
 Confirmed by @jonnybergdahl ([#134](https://github.com/lamiskin/espcontrol-community-devices/pull/134)) at `community-v0.7.2-upstream.v2.8.6`.
 :::
 ::: warning Camera Cards not available
-Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom for a second concurrent image-heavy transfer, so this device stays on the single-slot image pool.
+Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom for a second concurrent image-heavy transfer, so this device stays on the single-slot image pool: upstream's two-slot file, which adds a second image downloader, is not built for it.
+:::
+::: warning Camera screensaver not available
+The camera mode is refused on this panel: quad PSRAM leaves no headroom for the camera screensaver's image buffer, which it needs on top of the single image slot this device keeps. The code is compiled in, but the option is withheld.
+:::
+::: warning Weather forecast card not available
+The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it yet.
 :::
 
 |  |  |
