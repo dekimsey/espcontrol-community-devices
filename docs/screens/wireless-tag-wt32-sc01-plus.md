@@ -30,7 +30,7 @@ Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom 
 The camera mode is refused on this panel: quad PSRAM leaves no headroom for the camera screensaver's image buffer, which it needs on top of the single image slot this device keeps. The code is compiled in, but the option is withheld.
 :::
 ::: warning Weather forecast card not available
-The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it yet.
+The forecast card is left out of this board's firmware (-DESPCONTROL_DISABLE_WEATHER_FORECAST) and is not offered in the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it.
 :::
 
 |  |  |
