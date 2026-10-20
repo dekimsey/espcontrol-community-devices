@@ -67,7 +67,6 @@ esphome:
   friendly_name: ${friendly_name}
   platformio_options:
     build_flags:
-      - "-DESPCONTROL_DISABLE_TODO=1"
       - "-DESPCONTROL_MAX_GRID_SLOTS=9"
     build_src_flags:
       - "-mtext-section-literals"
