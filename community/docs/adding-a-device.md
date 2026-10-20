@@ -200,13 +200,19 @@ Run the full assembly to verify your device compiles cleanly against the pinned
 upstream:
 
 ```bash
-python3 community/scripts/assemble.py --skip-web
+python3 community/scripts/assemble.py --skip-web --strict
 ```
 
 This clones upstream, overlays your device, merges the catalog, runs generators
 and validators. A successful run means CI will also pass.
 
-You will see `Validator warning: 'python3 scripts/check_device_profiles.py'
+`--strict` is what CI runs with, and it matters: an upstream generator that
+exits non-zero fails the run, because the device would otherwise keep the
+blocks it had before — stale ones that still compile, so a green build
+proves nothing. If you see `Generator FAILED`, that is not a warning to
+ignore.
+
+You will see `Validator warning: 'python3 scripts/check_device_profiles.py'`
 exited with code 1` in the output — that is expected and non-fatal (see
 [`upstream-ref-bump.md`'s Gotchas](upstream-ref-bump.md#gotchas)). It asserts
 upstream's own hardcoded device-slug fixture, which can never account for

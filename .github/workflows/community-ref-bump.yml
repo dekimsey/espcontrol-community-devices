@@ -149,6 +149,14 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    # The generator outcome is published so the PR body can say whether the
+    # device blocks at this ref were actually regenerated. A dead upstream
+    # generator used to be a warning assemble.py swallowed, which left the
+    # previous ref's generated blocks in place; those blocks still compile,
+    # so every downstream check stayed green and the bump looked healthy.
+    outputs:
+      generators_ok: ${{ steps.assemble.outputs.generators_ok }}
+      generator_report: ${{ steps.assemble.outputs.generator_report }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -158,9 +166,48 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
       - name: Assemble
+        id: assemble
         run: |
           source .github/scripts/retry.sh
-          retry python3 community/scripts/assemble.py --skip-web
+          # --strict makes a failed upstream generator fail the run instead of
+          # being swallowed as a warning: the generators are what rewrite each
+          # device's BEGIN GENERATED block, so a dead one leaves the previous
+          # ref's block in place, which still compiles — the bump then looks
+          # green while nothing was regenerated.
+          # A generator failure is deterministic, so a second attempt cannot
+          # fix it — the one retry is there for a transient clone failure
+          # upstream of the generators, not for a broken generator.
+          set +e
+          output=$(RETRY_ATTEMPTS=2 retry python3 community/scripts/assemble.py --skip-web --strict 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "generators_ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "generators_ok=false" >> $GITHUB_OUTPUT
+          fi
+          # The PR body shows the tail of this report, so keep the job output
+          # bounded rather than carrying the whole assembly log between jobs.
+          report=$(printf '%s\n' "$output" | tail -200)
+          # Heredoc form: the generator output is multi-line, and the
+          # delimiter keeps it intact in the job output.
+          delimiter="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          {
+            echo "generator_report<<$delimiter"
+            printf '%s\n' "$report"
+            echo "$delimiter"
+          } >> $GITHUB_OUTPUT
+      - name: Fail if the upstream generators died
+        # A step of its own, so the outputs above are published before the
+        # job goes red — the PR body needs them to say what failed. It sits
+        # before "Refresh vendored common" so that step never runs against
+        # a half-generated tree.
+        run: |
+          if [ "${{ steps.assemble.outputs.generators_ok }}" != "true" ]; then
+            echo "::error::Upstream's generators failed — the device blocks at this ref are stale, and a compile against them would prove nothing."
+            exit 1
+          fi
       - name: Refresh vendored common
         run: |
           source .github/scripts/retry.sh
@@ -172,6 +219,24 @@ jobs:
             git commit -m "chore: refresh vendored common/ for ${{ needs.check-upstream.outputs.new_ref }}"
             retry git push
           fi
+      - name: Refresh UI cache stamp
+        # The stamp digests community/upstream-ref.txt, catalog-fragment.json
+        # and postprocess_www.py. The push job restamped after bump_refs.py,
+        # but anything that changes one of those inputs later on the branch
+        # leaves the 13 devices/*/packages.yaml on a stale stamp — and the
+        # PR's policy job then fails on ui_stamp --check for a reason that
+        # has nothing to do with the bump. Cheap insurance: it is a no-op
+        # unless the stamp actually moved.
+        run: |
+          source .github/scripts/retry.sh
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          python3 community/scripts/ui_stamp.py --write
+          if ! git diff --quiet -- 'devices/*/packages.yaml'; then
+            git add devices/
+            git commit -m "chore(devices): refresh the UI cache stamp"
+            retry git push
+          fi
 
   # Global check, independent of any single device's compile — runs
   # alongside the compile matrix instead of blocking on it.
@@ -179,8 +244,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check-upstream, push, assemble]
     timeout-minutes: 15
+    # Both reports are published so the PR body can carry them. Include
+    # parity compares common/ include paths; wiring parity compares the
+    # wiring upstream's generator emits around the generated blocks, which a
+    # ref bump silently leaves stale when it is gated on a catalog flag we
+    # never set.
     outputs:
-      report: ${{ steps.parity.outputs.report }}
+      include_report: ${{ steps.parity.outputs.include_report }}
+      wiring_report: ${{ steps.parity.outputs.wiring_report }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -189,23 +260,42 @@ jobs:
         run: |
           source .github/scripts/retry.sh
           retry python3 community/scripts/assemble.py --skip-web
-      - name: Include parity report
+      - name: Parity report
         id: parity
         env:
           UPSTREAM_CLONE: .assembly
         run: |
           set +e
-          report=$(python3 community/scripts/check_include_parity.py 2>&1)
-          status=$?
+          include_report=$(python3 community/scripts/check_include_parity.py 2>&1)
+          include_status=$?
+          wiring_report=$(python3 community/scripts/check_wiring_parity.py 2>&1)
+          wiring_status=$?
           set -e
-          printf '%s\n' "$report"
+          printf '%s\n' "$include_report"
+          printf '%s\n' "$wiring_report"
+          # Heredoc form: both reports are multi-line, and the delimiter
+          # keeps them intact in the job outputs.
           delimiter="$(python3 -c 'import uuid; print(uuid.uuid4())')"
           {
-            echo "report<<$delimiter"
-            printf '%s\n' "$report"
+            echo "include_report<<$delimiter"
+            printf '%s\n' "$include_report"
             echo "$delimiter"
+            echo "wiring_report<<$delimiter"
+            printf '%s\n' "$wiring_report"
+            echo "$delimiter"
+            echo "include_status=$include_status"
+            echo "wiring_status=$wiring_status"
           } >> $GITHUB_OUTPUT
-          exit "$status"
+      - name: Fail if either parity check found drift
+        # A step of its own, so the reports above are published before the
+        # job goes red: the PR body has to carry the drift the checks
+        # found, which is the whole point of running them in the bump
+        # workflow rather than only in PR CI.
+        run: |
+          if [ "${{ steps.parity.outputs.include_status }}" != "0" ] || [ "${{ steps.parity.outputs.wiring_status }}" != "0" ]; then
+            echo "::error::Include or wiring parity drift found — the reports are in the PR body."
+            exit 1
+          fi
 
   # Runs the esphome compiler — the highest-risk third-party code execution
   # in this pipeline (it fetches and runs platformio toolchains). No
@@ -242,14 +332,17 @@ jobs:
   # Aggregates the compile matrix and parity report into the PR. Runs
   # regardless of whether individual devices failed — a failed device still
   # needs to show up as ❌ in the PR body for review, not silently skip it.
-  # Guarded on compile.result != 'skipped' (rather than bare always()) so an
-  # earlier failure — e.g. assemble, which both compile and parity depend on
-  # — skips the matrix and this job together instead of opening a PR with
-  # every device falsely marked ❌.
+  # The PR is opened even when an earlier job failed (assemble, the compile
+  # matrix, parity): the bump branch is already pushed by the time those
+  # jobs run, so refusing to open a PR leaves that branch orphaned — and the
+  # next scheduled run then skips the bump forever, because check-upstream
+  # sees the branch on the remote and assumes its PR is still awaiting
+  # review. The body states honestly what did and what did not run; it must
+  # never claim devices passed when they did not compile.
   open-pr:
     runs-on: ubuntu-latest
-    needs: [check-upstream, push, compile, parity]
-    if: always() && needs.push.result == 'success' && needs.compile.result != 'skipped'
+    needs: [check-upstream, push, compile, parity, assemble]
+    if: always() && needs.push.result == 'success'
     permissions:
       contents: read
       actions: read
@@ -261,49 +354,111 @@ jobs:
       - name: Open PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The reports are multi-line and contain backticks and $, so they
+          # arrive as environment variables rather than spliced into the
+          # script text — an interpolated value would be re-interpreted by
+          # the shell.
+          GENERATORS_OK: ${{ needs.assemble.outputs.generators_ok }}
+          GENERATOR_REPORT: ${{ needs.assemble.outputs.generator_report }}
+          INCLUDE_REPORT: ${{ needs.parity.outputs.include_report }}
+          WIRING_REPORT: ${{ needs.parity.outputs.wiring_report }}
+          COMPILE_RESULT: ${{ needs.compile.result }}
+          CURRENT_REF: ${{ needs.check-upstream.outputs.current_ref }}
+          NEW_REF: ${{ needs.check-upstream.outputs.new_ref }}
+          NEW_SHA: ${{ needs.check-upstream.outputs.new_sha }}
         run: |
           source .github/scripts/retry.sh
-          PARITY="${{ needs.parity.outputs.report }}"
-          [ -z "$PARITY" ] && PARITY="N/A"
-          BRANCH="ref-bump/${{ needs.check-upstream.outputs.new_ref }}"
+          BRANCH="ref-bump/$NEW_REF"
+          RESULTS_FILE=$(mktemp)
+          BODY_FILE=$(mktemp)
 
           # One fetch of this run's jobs, then match each device against it
           # locally — avoids a gh api call per device.
           JOBS_JSON=$(retry gh run view ${{ github.run_id }} --json jobs)
           DEVICES=$(python3 -c "import json; print('\n'.join(json.load(open('community/devices.json'))['devices']))")
 
-          RESULTS=""
-          while IFS= read -r slug; do
-            [ -z "$slug" ] && continue
-            # Exact job-name match, not `contains($slug)` — a substring match
-            # made every m5stack-esp32-p4-tab5 result also match
-            # m5stack-esp32-p4-tab5-v1's job, turning one CONCLUSION into a
-            # two-line string that could never equal "success".
-            CONCLUSION=$(echo "$JOBS_JSON" | jq -r --arg name "compile ($slug)" \
-              '.jobs[] | select(.name == $name) | .conclusion')
-            if [ "$CONCLUSION" = "success" ]; then
-              RESULTS="$RESULTS\n- ✅ $slug"
+          if [ "$GENERATORS_OK" != "true" ]; then
+            # The generators are what rewrite the BEGIN GENERATED blocks, so
+            # a dead one leaves the previous ref's blocks in place. Those
+            # blocks still compile, so a compile result would prove nothing
+            # about the new upstream — no device is claimed here.
+            printf '%s\n' "- Compile matrix did not run: the assembly did not complete (upstream's generators failed), so the device blocks at this ref are stale and a compile result would prove nothing about the new upstream." >> "$RESULTS_FILE"
+          elif [ "$COMPILE_RESULT" = "skipped" ]; then
+            printf '%s\n' "- Compile matrix did not run (compile job result: $COMPILE_RESULT)." >> "$RESULTS_FILE"
+          else
+            while IFS= read -r slug; do
+              [ -z "$slug" ] && continue
+              # Exact job-name match, not `contains($slug)` — a substring match
+              # made every m5stack-esp32-p4-tab5 result also match
+              # m5stack-esp32-p4-tab5-v1's job, turning one CONCLUSION into a
+              # two-line string that could never equal "success".
+              CONCLUSION=$(echo "$JOBS_JSON" | jq -r --arg name "compile ($slug)" \
+                '.jobs[] | select(.name == $name) | .conclusion' || true)
+              if [ "$CONCLUSION" = "success" ]; then
+                printf '%s\n' "- ✅ $slug" >> "$RESULTS_FILE"
+              else
+                printf '%s\n' "- ❌ $slug" >> "$RESULTS_FILE"
+              fi
+            done <<< "$DEVICES"
+          fi
+
+          # The body is built in a file and passed with --body-file: the
+          # reports contain backticks and $, which a double-quoted --body
+          # string would mangle. Each report is inserted with printf '%s\n'
+          # so its contents are never re-interpreted by the shell.
+          {
+            echo "## Upstream Ref Bump"
+            echo
+            printf 'Bumps from `%s` to `%s` (resolved commit `%s` — clones pin to this SHA, immune to the tag being deleted/repointed later).\n' \
+              "$CURRENT_REF" "$NEW_REF" "$NEW_SHA"
+            echo
+            echo "### Upstream Generators"
+            echo
+            if [ "$GENERATORS_OK" = "true" ]; then
+              echo "All upstream generators completed; the device blocks at this ref are regenerated from them."
             else
-              RESULTS="$RESULTS\n- ❌ $slug"
+              echo "❌ The assembly did not complete — upstream's generators failed — so the device blocks at this ref are stale and were not regenerated."
+              echo
+              echo '```'
+              if [ -n "$GENERATOR_REPORT" ]; then
+                printf '%s\n' "$GENERATOR_REPORT" | tail -40 || true
+              else
+                echo "(no output captured)"
+              fi
+              echo '```'
             fi
-          done <<< "$DEVICES"
+            echo
+            echo "### Compile Results"
+            echo
+            cat "$RESULTS_FILE"
+            echo
+            echo "### Include Parity Report"
+            echo
+            echo '```'
+            if [ -n "$INCLUDE_REPORT" ]; then
+              printf '%s\n' "$INCLUDE_REPORT"
+            else
+              echo "N/A"
+            fi
+            echo '```'
+            echo
+            echo "### Wiring Parity Report"
+            echo
+            echo '```'
+            if [ -n "$WIRING_REPORT" ]; then
+              printf '%s\n' "$WIRING_REPORT"
+            else
+              echo "N/A"
+            fi
+            echo '```'
+            echo
+            echo "---"
+            echo "**Do not auto-merge.** Review compile results and parity changes before merging."
+          } > "$BODY_FILE"
 
           retry gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "chore: bump upstream ref to ${{ needs.check-upstream.outputs.new_ref }}" \
+            --title "chore: bump upstream ref to $NEW_REF" \
             --label "ref-bump" \
-            --body "## Upstream Ref Bump
-
-          Bumps from \`${{ needs.check-upstream.outputs.current_ref }}\` to \`${{ needs.check-upstream.outputs.new_ref }}\` (resolved commit \`${{ needs.check-upstream.outputs.new_sha }}\` — clones pin to this SHA, immune to the tag being deleted/repointed later).
-
-          ### Compile Results
-          $(echo -e "$RESULTS")
-
-          ### Include Parity Report
-          \`\`\`
-          $PARITY
-          \`\`\`
-
-          ---
-          **Do not auto-merge.** Review compile results and parity changes before merging."
+            --body-file "$BODY_FILE"

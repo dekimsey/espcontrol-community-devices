@@ -21,6 +21,7 @@ jobs:
         run: |
           python3 community/scripts/convert_packages.py --self-test
           python3 community/scripts/check_policy.py --self-test
+          python3 community/scripts/assemble.py --self-test-offline
           python3 community/scripts/check_include_parity.py --self-test
           python3 community/scripts/check_wiring_parity.py --self-test
           python3 community/scripts/check_image_privacy.py --self-test
@@ -145,7 +146,13 @@ jobs:
       - name: Assemble
         run: |
           source .github/scripts/retry.sh
-          retry python3 community/scripts/assemble.py --skip-checks --skip-web
+          # --strict makes a failed upstream generator fail the job: it would
+          # otherwise leave the previous ref's generated block in place, which
+          # still compiles and hides the failure behind a green PR.
+          # A generator failure is deterministic, so retrying it more than
+          # once only repeats the clone; one retry still covers a transient
+          # network failure.
+          RETRY_ATTEMPTS=2 retry python3 community/scripts/assemble.py --skip-checks --skip-web --strict
       - name: Pin consistency
         run: python3 community/scripts/check_pin_consistency.py
       - name: Include parity
