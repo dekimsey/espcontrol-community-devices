@@ -265,6 +265,71 @@ def merge_catalog(slugs):
     register_product_model_v2_pilots(fragment_devices)
 
 
+CAMERA_SLUGS_RE = re.compile(
+    r"^(CAMERA_SCREENSAVER_DEVICE_SLUGS\s*=\s*)\{([^}]*)\}\s*$", re.MULTILINE)
+CAMERA_SUPPORTED_RE = re.compile(
+    r'^\s*screensaver_camera_supported:\s*"(true|false)"\s*$', re.MULTILINE)
+
+
+def camera_supported_slugs(slugs, devices_dir=None):
+    """
+    Community devices whose own packages.yaml says the firmware supports the
+    camera screensaver (`screensaver_camera_supported: "true"`).
+    """
+    devices_dir = devices_dir or os.path.join(REPO_ROOT, "devices")
+    supported = []
+    for slug in slugs:
+        path = os.path.join(devices_dir, slug, "packages.yaml")
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            match = CAMERA_SUPPORTED_RE.search(handle.read())
+        if match and match.group(1) == "true":
+            supported.append(slug)
+    return supported
+
+
+def patch_camera_screensaver_slugs(slugs, profiles_path=None, devices_dir=None):
+    """
+    Make the web configurator offer the camera screensaver on every community
+    device whose firmware includes it.
+
+    Upstream decides that in scripts/device_profiles.py: a device gets
+    features.cameraScreensaver if it is an ESP32-P4 or its slug is in
+    CAMERA_SCREENSAVER_DEVICE_SLUGS, and there is no catalog setting for it.
+    The community's packages.yaml files choose the firmware side by hand
+    (`screensaver_camera_supported`), so the two could disagree: a board could
+    carry the camera code with no way to switch it on from the UI. Adding the
+    supported slugs to upstream's set keeps the UI and the firmware on the
+    same answer, with the substitution as the single source of truth.
+
+    The edit is made to the throwaway upstream clone. If upstream changes that
+    line the patch fails loudly rather than silently doing nothing.
+    """
+    profiles_path = profiles_path or os.path.join(ASSEMBLY_DIR, "scripts", "device_profiles.py")
+    with open(profiles_path, encoding="utf-8") as handle:
+        source = handle.read()
+    matches = CAMERA_SLUGS_RE.findall(source)
+    if len(matches) != 1:
+        error("Cannot make the web UI offer the camera screensaver: expected exactly one "
+              "CAMERA_SCREENSAVER_DEVICE_SLUGS assignment in upstream's "
+              f"scripts/device_profiles.py, found {len(matches)}. Upstream changed how "
+              "that is decided; update patch_camera_screensaver_slugs().")
+        sys.exit(1)
+    existing = re.findall(r'"([^"]+)"', matches[0][1])
+    wanted = camera_supported_slugs(slugs, devices_dir)
+    merged = sorted(set(existing) | set(wanted))
+    replacement = "CAMERA_SCREENSAVER_DEVICE_SLUGS = {" + ", ".join(f'"{s}"' for s in merged) + "}"
+    patched = CAMERA_SLUGS_RE.sub(lambda m: replacement, source, count=1)
+    if patched != source:
+        with open(profiles_path, "w", encoding="utf-8") as handle:
+            handle.write(patched)
+    added = [s for s in merged if s not in existing]
+    status(f"Camera screensaver offered in the web UI for {len(merged)} device(s) "
+           f"({len(added)} added from packages.yaml).")
+    return merged
+
+
 def register_product_model_v2_pilots(fragment_devices):
     """
     Register each community device as a Product Model v2 "devices" pilot
@@ -903,6 +968,42 @@ def self_test_offline():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # 4b. The web UI offers the camera screensaver exactly where the device's
+    #     packages.yaml says the firmware has it, and the patch refuses to run
+    #     against an upstream that changed how that is decided.
+    tmp = tempfile.mkdtemp(prefix="assemble_camera_test_")
+    try:
+        devices_dir = os.path.join(tmp, "devices")
+        for slug, flag in (("has-camera", "true"), ("no-camera", "false"), ("unset", None)):
+            os.makedirs(os.path.join(devices_dir, slug))
+            body = "substitutions:\n  device_slug: x\n"
+            if flag is not None:
+                body += f'  screensaver_camera_supported: "{flag}"\n'
+            with open(os.path.join(devices_dir, slug, "packages.yaml"), "w") as handle:
+                handle.write(body)
+        profiles = os.path.join(tmp, "device_profiles.py")
+        with open(profiles, "w") as handle:
+            handle.write('X = 1\nCAMERA_SCREENSAVER_DEVICE_SLUGS = {"upstream-ref"}\nY = 2\n')
+        slugs = ["has-camera", "no-camera", "unset", "missing-dir"]
+        merged = patch_camera_screensaver_slugs(slugs, profiles, devices_dir)
+        if merged != ["has-camera", "upstream-ref"]:
+            failures.append(f"camera slugs should be upstream's plus the supported device, got {merged}")
+        again = patch_camera_screensaver_slugs(slugs, profiles, devices_dir)
+        with open(profiles) as handle:
+            text = handle.read()
+        if again != merged or text.count("CAMERA_SCREENSAVER_DEVICE_SLUGS") != 1 \
+                or not text.startswith("X = 1\n") or not text.endswith("Y = 2\n"):
+            failures.append("the camera slug patch is not idempotent or touched other lines")
+        with open(profiles, "w") as handle:
+            handle.write("X = 1\n")
+        try:
+            patch_camera_screensaver_slugs(slugs, profiles, devices_dir)
+            failures.append("the camera slug patch did not fail when upstream's line is gone")
+        except SystemExit:
+            pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # 5. --strict turns a dead generator into a failed run; without it the
     #    failure is reported and the run continues, which is what let a ref
     #    bump report success while compiling stale device blocks.
@@ -1136,6 +1237,9 @@ def main():
 
     # Step 4: Merge catalog
     merge_catalog(slugs)
+
+    # Step 4b: Keep the web UI's camera screensaver in step with the firmware
+    patch_camera_screensaver_slugs(slugs)
 
     # Step 5: Run generators
     run_generators(slugs, sync_generated=args.sync_generated, strict=args.strict)
