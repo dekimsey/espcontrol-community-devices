@@ -12,10 +12,18 @@ Builds a throwaway working tree at .assembly/ by:
 7. Copying the bundle to community-pages/webserver/www.js
 
 Usage:
-    python3 community/scripts/assemble.py [--skip-checks] [--skip-web] [--sync-generated] [--self-test]
+    python3 community/scripts/assemble.py [--skip-checks] [--skip-web] [--sync-generated] [--strict] [--self-test]
+    python3 community/scripts/assemble.py --self-test-offline
+
+--strict makes a non-zero exit from an upstream generator fail the run.
+Upstream's generators own the content between the BEGIN/END GENERATED
+markers; when one of them dies, the device keeps its previous blocks and
+every check still passes, so a compile against it proves nothing about the
+new ref. The ref-bump workflow runs with --strict for that reason.
 """
 
 import argparse
+import difflib
 import glob
 import json
 import os
@@ -301,23 +309,51 @@ def register_product_model_v2_pilots(fragment_devices):
     status("Product Model v2 pilot registration complete.")
 
 
-def extract_generated_blocks(content):
+def block_key(begin_line):
     """
-    Extract generated blocks from file content.
-    Returns list of (start_line, end_line, block_text) tuples.
+    Identity of a generated block: its BEGIN marker, whitespace-normalized.
+
+    Upstream emits several distinct blocks per device (the button packages
+    block, and four grid-wiring blocks), so a block in the assembly tree can
+    only be matched to the same block in a source file by its marker —
+    matching by position would silently swap one for another if a device
+    gained or lost a block.
+    """
+    return re.sub(r"\s+", " ", begin_line.strip())
+
+
+def parse_generated_blocks(content):
+    """
+    Parse the BEGIN/END GENERATED blocks out of file content.
+
+    Returns a list of (start, end, key, text) tuples, one per block: start
+    and end are 0-based line indices (end inclusive), key identifies the
+    block by its BEGIN marker, and text is the block including its markers.
     """
     lines = content.splitlines(keepends=True)
     blocks = []
-    in_block = False
-    start = 0
-    for i, line in enumerate(lines):
-        if GENERATED_BEGIN_RE.search(line):
-            in_block = True
-            start = i
-        elif GENERATED_END_RE.search(line) and in_block:
-            blocks.append((start, i, "".join(lines[start:i + 1])))
-            in_block = False
+    i = 0
+    while i < len(lines):
+        if GENERATED_BEGIN_RE.search(lines[i]):
+            end = i + 1
+            while end < len(lines) and not GENERATED_END_RE.search(lines[end]):
+                end += 1
+            if end < len(lines):
+                blocks.append((i, end, block_key(lines[i]),
+                               "".join(lines[i:end + 1])))
+                i = end + 1
+                continue
+        i += 1
     return blocks
+
+
+def strip_generated_blocks(content):
+    """File content with every generated block removed."""
+    lines = content.splitlines(keepends=True)
+    skip = set()
+    for start, end, _key, _text in parse_generated_blocks(content):
+        skip.update(range(start, end + 1))
+    return "".join(line for i, line in enumerate(lines) if i not in skip)
 
 
 def diff_ignoring_generated(old_content, new_content):
@@ -325,25 +361,147 @@ def diff_ignoring_generated(old_content, new_content):
     Check if two file contents differ outside of generated blocks.
     Returns True if there are meaningful (non-generated) differences.
     """
-    old_blocks = extract_generated_blocks(old_content)
-    new_blocks = extract_generated_blocks(new_content)
+    return strip_generated_blocks(old_content) != strip_generated_blocks(new_content)
 
-    # Strip generated blocks from both and compare
-    def strip_generated(content, blocks):
-        lines = content.splitlines(keepends=True)
-        result = []
-        skip_ranges = set()
-        for start, end, _ in blocks:
-            for i in range(start, end + 1):
-                skip_ranges.add(i)
-        for i, line in enumerate(lines):
-            if i not in skip_ranges:
-                result.append(line)
-        return "".join(result)
 
-    old_stripped = strip_generated(old_content, old_blocks)
-    new_stripped = strip_generated(new_content, new_blocks)
-    return old_stripped != new_stripped
+def splice_generated_blocks(source_content, assembly_content):
+    """
+    Replace each generated block in source_content with the matching block
+    from assembly_content.
+
+    Blocks are matched by their BEGIN marker, so a block that exists on
+    only one side is left alone rather than shifting everything after it.
+
+    Returns (new_content, changed_block_count, unmatched_keys).
+    """
+    assembly_blocks = {}
+    for _start, _end, key, text in parse_generated_blocks(assembly_content):
+        assembly_blocks[key] = text
+
+    lines = source_content.splitlines(keepends=True)
+    out = []
+    pos = 0
+    changed = 0
+    unmatched = []
+    for start, end, key, text in parse_generated_blocks(source_content):
+        if key not in assembly_blocks:
+            unmatched.append(key)
+            continue
+        replacement = assembly_blocks[key]
+        out.extend(lines[pos:start])
+        out.append(replacement)
+        pos = end + 1
+        if replacement != text:
+            changed += 1
+    out.extend(lines[pos:])
+    return "".join(out), changed, unmatched
+
+
+def print_unified_diff(old_desc, new_desc, old_content, new_content,
+                       max_lines=40):
+    """
+    Print a bounded unified diff.
+
+    The files involved are whole device packages — a full diff runs to
+    hundreds of lines and buries the part that matters, so it is truncated
+    with an explicit note about what was left out.
+    """
+    diff = list(difflib.unified_diff(
+        old_content.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{old_desc}",
+        tofile=f"b/{new_desc}",
+    ))
+    if not diff:
+        return
+    print(f"\n--- {old_desc} (community, hand-maintained)")
+    print(f"+++ {new_desc} (upstream generator output)")
+    for line in diff[:max_lines]:
+        print(line.rstrip("\n"))
+    if len(diff) > max_lines:
+        print(f"  … diff truncated ({len(diff) - max_lines} more lines)")
+
+
+def sync_file_blocks(src_path, asm_path, label=None):
+    """
+    Copy the generated blocks from the assembly file into the source file.
+
+    Only content between BEGIN/END GENERATED markers is copied. When the
+    generator changed anything outside those markers, the source file is
+    left untouched and "refused" is returned: upstream's generator rewrites
+    a device's whole packages.yaml into its own relative-include form, and
+    copying that back would drop the remote include pins, the community
+    substitutions and the ui= cache stamp — all hand-maintained here and
+    none of them something the generator understands.
+
+    Returns (outcome, detail) where outcome is "unchanged", "written" or
+    "refused".
+    """
+    asm_content = open(asm_path).read()
+    src_content = open(src_path).read()
+    if asm_content == src_content:
+        return "unchanged", "identical"
+
+    if diff_ignoring_generated(src_content, asm_content):
+        if label:
+            print_unified_diff(label, f".assembly/{label}",
+                               src_content, asm_content)
+        return "refused", "the generator changed content outside the generated blocks"
+
+    new_content, changed, unmatched = splice_generated_blocks(src_content,
+                                                              asm_content)
+    if unmatched:
+        if label:
+            print_unified_diff(label, f".assembly/{label}",
+                               src_content, asm_content)
+        return "refused", ("no counterpart in the assembly tree for: "
+                           + ", ".join(unmatched))
+    if new_content == src_content:
+        return "unchanged", "identical"
+
+    with open(src_path, "w") as f:
+        f.write(new_content)
+    return "written", f"{changed} generated block(s)"
+
+
+def sync_generated_back(slugs):
+    """
+    Copy generated blocks from .assembly/devices/<slug>/ back to the source
+    devices/<slug>/ in the repo root.
+
+    Only the content inside the BEGIN/END GENERATED markers is copied, and
+    a file the generator rewrote outside those markers is refused rather
+    than overwritten — see sync_file_blocks().
+
+    Returns (written_paths, refused_paths).
+    """
+    written = []
+    refused = []
+    if not slugs:
+        return written, refused
+
+    status("Syncing generated blocks back to source ...")
+    for slug in slugs:
+        assembly_device = os.path.join(ASSEMBLY_DIR, "devices", slug)
+        source_device = os.path.join(REPO_ROOT, "devices", slug)
+        if not os.path.isdir(assembly_device) or not os.path.isdir(source_device):
+            continue
+        for root, _dirs, files in os.walk(assembly_device):
+            for fname in sorted(files):
+                asm_path = os.path.join(root, fname)
+                rel_path = os.path.relpath(asm_path, assembly_device)
+                src_path = os.path.join(source_device, rel_path)
+                if not os.path.isfile(src_path):
+                    continue
+                label = f"devices/{slug}/{rel_path}"
+                outcome, detail = sync_file_blocks(src_path, asm_path, label)
+                if outcome == "written":
+                    written.append(label)
+                    status(f"  Synced {detail} into {label}")
+                elif outcome == "refused":
+                    refused.append(label)
+                    status(f"  REFUSED {label}: {detail}")
+    return written, refused
 
 
 
@@ -383,8 +541,16 @@ def sync_generated_back(slugs):
                         status(f"  Synced generated blocks: devices/{slug}/{rel_path}")
 
 
-def run_generators(slugs, sync_generated=False):
-    """Run upstream generator scripts inside .assembly/."""
+def run_generators(slugs, sync_generated=False, strict=False):
+    """
+    Run upstream generator scripts inside .assembly/.
+
+    With strict=True a generator that exits non-zero fails the run. The
+    generators own the content between the BEGIN/END GENERATED markers, so
+    a dead one leaves the device on the blocks it had before the ref bump:
+    everything downstream still passes, and the compiled firmware is a mix
+    of two upstream versions.
+    """
     status("Running generators ...")
 
     generators = [
@@ -404,6 +570,7 @@ def run_generators(slugs, sync_generated=False):
                         fpath = os.path.join(root, fname)
                         snapshots[fpath] = open(fpath).read()
 
+    failures = []
     for cmd in generators:
         result = subprocess.run(
             cmd,
@@ -414,20 +581,42 @@ def run_generators(slugs, sync_generated=False):
         if result.stdout:
             print(result.stdout, end="")
         if result.returncode != 0:
-            status(f"  Generator warning: '{' '.join(cmd)}' exited with code {result.returncode}")
+            failures.append((cmd, result.returncode))
+            status(f"  Generator FAILED: '{' '.join(cmd)}' exited with code {result.returncode}")
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
-            status("  (Continuing — generator failure may require extra dependencies)")
+            status("  The generated blocks of the affected devices are STALE "
+                   "at this ref — a compile against them proves nothing.")
+
+    if failures:
+        summary = ", ".join(f"{' '.join(cmd)} (exit {code})"
+                            for cmd, code in failures)
+        if strict:
+            error(f"{len(failures)} upstream generator(s) failed: {summary}. "
+                  "Refusing to continue: the generated blocks would be stale.")
+        status(f"  (Continuing — generator failure may require extra "
+               f"dependencies) [{len(failures)} generator(s) failed: {summary}]")
 
     # generate_device_slots.py rewrites the whole packages section of any
     # file carrying the generated-block markers into upstream relative-
     # include form — with the default button template, which is wrong for
     # community devices. That rewrite is unwanted here: assembly compiles
     # must use the true remote-include form users get. Sync generated
-    # blocks back first if requested, then restore the community sources.
+    # blocks back first if requested (block content only — a file the
+    # generator rewrote outside the markers is refused, not overwritten),
+    # then restore the community sources.
     if slugs:
         if sync_generated:
-            sync_generated_back(slugs)
+            written, refused = sync_generated_back(slugs)
+            if refused:
+                status(f"ERROR: {len(refused)} file(s) refused — the generator "
+                       "rewrote hand-maintained content outside the generated "
+                       "blocks:")
+                for path in refused:
+                    status(f"  - {path}")
+                if strict:
+                    error("Refusing to sync generated blocks into files the "
+                          "generator rewrote wholesale. Reconcile them by hand.")
         for slug in slugs:
             src = os.path.join(REPO_ROOT, "devices", slug, "packages.yaml")
             dst = os.path.join(ASSEMBLY_DIR, "devices", slug,
@@ -592,12 +781,179 @@ def run_validators():
 
 
 
+def self_test_offline():
+    """
+    Self-tests that need no upstream clone and no network.
+
+    They cover the rule that keeps --sync-generated from destroying
+    hand-maintained content: upstream's generator rewrites a device's whole
+    packages.yaml into its own relative-include form, dropping the remote
+    include pins, the community substitutions and the ui= cache stamp, so a
+    file it rewrote outside the generated markers has to be refused rather
+    than overwritten.
+
+    Returns 0 on success, 1 on failure.
+    """
+    import shutil
+    import tempfile
+
+    failures = []
+
+    source = (
+        "substitutions:\n"
+        "  voice_clock_bar_apply_code: \"\"\n"
+        "packages:\n"
+        "  upstream_c:\n"
+        "    files:\n"
+        "      # BEGIN GENERATED BUTTON PACKAGES\n"
+        "      - path: common/config/button_template.yaml\n"
+        "      # END GENERATED BUTTON PACKAGES\n"
+        "      - common/addon/time.yaml\n"
+        "web_server:\n"
+        "  js_url: https://example.test/www.js?v=1&ui=abc123\n"
+    )
+    assembly = source.replace(
+        "      - path: common/config/button_template.yaml\n",
+        "      - path: common/config/button_template.yaml\n"
+        "        vars: { num: \"1\" }\n"
+        "        vars: { num: \"2\" }\n",
+    )
+    rewritten = source.replace(
+        "- common/addon/time.yaml\n", "- common/addon/other.yaml\n")
+
+    tmp = tempfile.mkdtemp(prefix="assemble_sync_test_")
+    try:
+        src_path = os.path.join(tmp, "packages.yaml")
+        asm_path = os.path.join(tmp, "packages.assembly.yaml")
+
+        # 1. A change confined to the generated markers is spliced in, and
+        #    everything outside them survives byte-for-byte.
+        with open(src_path, "w") as f:
+            f.write(source)
+        with open(asm_path, "w") as f:
+            f.write(assembly)
+        outcome, detail = sync_file_blocks(src_path, asm_path)
+        if outcome != "written":
+            failures.append(f"expected the block change to be written, got "
+                            f"{outcome} ({detail})")
+        with open(src_path) as f:
+            spliced = f.read()
+        if 'vars: { num: "2" }' not in spliced:
+            failures.append("the generated block was not spliced in")
+        for keep in ('voice_clock_bar_apply_code: ""', "ui=abc123",
+                     "- common/addon/time.yaml"):
+            if keep not in spliced:
+                failures.append(f"hand-maintained content lost: {keep}")
+        if diff_ignoring_generated(source, spliced):
+            failures.append("splicing changed content outside the generated "
+                            "blocks")
+
+        # 2. The generator rewriting the file wholesale is refused, and the
+        #    hand-maintained content is left exactly as it was.
+        with open(src_path, "w") as f:
+            f.write(source)
+        with open(asm_path, "w") as f:
+            f.write(rewritten)
+        outcome, detail = sync_file_blocks(src_path, asm_path)
+        if outcome != "refused":
+            failures.append(f"expected the wholesale rewrite to be refused, "
+                            f"got {outcome}")
+        with open(src_path) as f:
+            after = f.read()
+        if after != source:
+            failures.append("a refused file was modified anyway")
+
+        # 3. Blocks are matched by their marker, not by position: a block
+        #    only the source has stays put, and the block after it is still
+        #    the one that gets replaced.
+        two_blocks = (
+            "# BEGIN GENERATED A\n"
+            "a-old\n"
+            "# END GENERATED A\n"
+            "keep me\n"
+            "# BEGIN GENERATED B\n"
+            "b-old\n"
+            "# END GENERATED B\n"
+        )
+        only_b = (
+            "# BEGIN GENERATED B\n"
+            "b-new\n"
+            "# END GENERATED B\n"
+        )
+        new_content, changed, unmatched = splice_generated_blocks(two_blocks,
+                                                                  only_b)
+        if "a-old" not in new_content:
+            failures.append("a block with no counterpart was dropped")
+        if "b-new" not in new_content:
+            failures.append("the block after an unmatched one was not replaced")
+        if changed != 1:
+            failures.append(f"expected 1 changed block, got {changed}")
+        if unmatched != ["# BEGIN GENERATED A"]:
+            failures.append(f"unexpected unmatched blocks: {unmatched}")
+        if "keep me" not in new_content:
+            failures.append("content between blocks was lost")
+
+        # 4. A rewrite outside the markers is detected, and a change inside
+        #    them is not mistaken for one.
+        if not diff_ignoring_generated(source, rewritten):
+            failures.append("an outside-block rewrite was not detected")
+        if diff_ignoring_generated(source, assembly):
+            failures.append("a change inside the markers read as an "
+                            "outside-block rewrite")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 5. --strict turns a dead generator into a failed run; without it the
+    #    failure is reported and the run continues, which is what let a ref
+    #    bump report success while compiling stale device blocks.
+    import contextlib
+    import io
+    import subprocess as real_subprocess
+
+    class _DeadGenerator:
+        returncode = 1
+        stdout = ""
+        stderr = "simulated generator failure\n"
+
+    def fake_run(cmd, *args, **kwargs):
+        return _DeadGenerator()
+
+    original_run = real_subprocess.run
+    real_subprocess.run = fake_run
+    strict_failed = False
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            run_generators([], strict=False)
+            try:
+                run_generators([], strict=True)
+            except SystemExit as exc:
+                strict_failed = exc.code in (1, None)
+    finally:
+        real_subprocess.run = original_run
+
+    if not strict_failed:
+        failures.append("--strict did not fail the run when a generator died")
+
+    if failures:
+        for msg in failures:
+            print(f"[assemble] self-test: {msg}", file=sys.stderr)
+        return 1
+    print("[assemble] offline self-test passed")
+    return 0
+
+
 def run_self_test():
     """
     Self-test mode: verify the catalog merge logic works with the real
     upstream catalog structure using a fixture.
     """
     status("Running self-test ...")
+
+    # The offline checks need no clone, so they run first: a failure there
+    # is cheap to find and does not need the network.
+    if self_test_offline() != 0:
+        error("Offline self-tests failed")
 
     # Step 1: Read the pin and clone upstream
     pin = read_pin()
@@ -754,9 +1110,16 @@ def main():
     parser.add_argument("--skip-checks", action="store_true", help="Skip running validators")
     parser.add_argument("--skip-web", action="store_true", help="Skip web bundle build (requires node/npm)")
     parser.add_argument("--sync-generated", action="store_true", help="Copy generated blocks back to source")
+    parser.add_argument("--strict", action="store_true",
+                        help="Fail when an upstream generator exits non-zero "
+                             "(default: warn and continue)")
     parser.add_argument("--self-test", action="store_true", help="Run self-test mode")
+    parser.add_argument("--self-test-offline", action="store_true",
+                        help="Run only the self-tests that need no upstream clone")
     args = parser.parse_args()
 
+    if args.self_test_offline:
+        sys.exit(self_test_offline())
     if args.self_test:
         run_self_test()
         return
@@ -775,7 +1138,7 @@ def main():
     merge_catalog(slugs)
 
     # Step 5: Run generators
-    run_generators(slugs, sync_generated=args.sync_generated)
+    run_generators(slugs, sync_generated=args.sync_generated, strict=args.strict)
 
     # Step 6: Run validators (unless --skip-checks)
     if not args.skip_checks:

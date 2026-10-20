@@ -38,6 +38,27 @@ device has and ours does not (that is how the `panel_config` gap shows up);
 those are reported, not failed, because `device.yaml` legitimately differs
 per board. Read the advisories at bump time — step 3 below.
 
+### When an upstream generator dies
+
+A third gap, and the one that produced a false green: the generators are
+third-party code and can fail on their own. When one exits non-zero, the
+device keeps the blocks it had *before* the bump — the stale ones — and
+everything downstream still passes, because stale blocks are still valid
+YAML and still compile. The v2.13.0 bump is the case in point: three of
+upstream's generators died (upstream's own manifest validation wants a font
+id that one community device does not declare), the compile matrix reported
+13/13 green, and nothing surfaced until someone looked at what had actually
+been compiled.
+
+`assemble.py --strict` now turns a non-zero generator exit into a failed
+run, and the ref-bump workflow runs with it. The bump PR body says so
+explicitly: its compile-results section reports that the matrix did not run
+instead of listing devices as passing, and the workflow run itself is red.
+
+`--strict` covers the **generators** only. Upstream's validators stay
+non-fatal, because `check_device_profiles.py` always fails here (see
+Gotchas) — so a red `assemble` job means a generator died, not a validator.
+
 ## Procedure
 
 1. **Let the bump PR run.** If `assemble` fails with
@@ -46,12 +67,19 @@ per board. Read the advisories at bump time — step 3 below.
    diff, and if it is upstream's own restructuring, take the regenerated
    content from `.assembly/devices/<slug>/device/sensors.yaml`.
 
+   If it fails with `upstream generator(s) failed` instead, an upstream
+   generator died — see "When an upstream generator dies" above. The PR body
+   carries the tail of the generator log.
+
+   The PR body also carries the wiring-parity report and the include-parity
+   report, so drift that used to need a local run to see is in the PR itself.
+
 2. **Diff our devices against upstream's reference devices.** This is the step
    that catches flag-gated drift. For each chip family, compare the
    hand-authored regions — not just the generated blocks:
 
    ```bash
-   python3 community/scripts/assemble.py --skip-web
+   python3 community/scripts/assemble.py --skip-web --strict
    diff .assembly/devices/guition-esp32-s3-4848s040/device/sensors.yaml \
         devices/<our-s3-device>/device/sensors.yaml
    diff .assembly/devices/guition-esp32-p4-jc1060p470/device/sensors.yaml \
@@ -174,7 +202,18 @@ python3 community/scripts/generate_docs.py
 - **`check_device_profiles.py` always fails** in this repo. It asserts
   upstream's hardcoded fixture matches the profile slug list, which cannot hold
   once community devices are in the catalog. `assemble.py` treats validators as
-  non-fatal for this reason. Do not chase it.
+  non-fatal for this reason. Do not chase it. `--strict` does not change that:
+  it fails on a dead generator, not on a validator.
+- **`assemble.py --sync-generated` refuses `packages.yaml`, and that is
+  correct.** Upstream's generator rewrites a device's whole `packages.yaml`
+  into its own relative-include form, which drops the remote include pins,
+  the community substitutions (`voice_clock_bar_*`, `battery_status_*`,
+  `card_curve_*`) and the `ui=` cache stamp — all hand-maintained here, none
+  of them anything the generator understands. So `--sync-generated` copies the
+  content between the `BEGIN/END GENERATED` markers only, and refuses any
+  file the generator rewrote outside them, printing the difference. Take
+  regenerated blocks from `.assembly/devices/<slug>/device/sensors.yaml` by
+  hand; never copy `.assembly/.../packages.yaml` over the repo's.
 - **A device slug that is a prefix of another** (`…-tab5` / `…-tab5-v1`) is
   handled in `assemble.py`'s overlay glob and in `DEVICES_POLICY.md`'s `allowed`
   patterns — use `builds/<slug>.*yaml`, never `builds/<slug>*.yaml`.
