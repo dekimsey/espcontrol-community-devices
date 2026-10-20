@@ -504,43 +504,6 @@ def sync_generated_back(slugs):
     return written, refused
 
 
-
-def sync_generated_back(slugs):
-    """
-    Copy generated blocks from .assembly/devices/<slug>/ back to the source
-    devices/<slug>/ in the repo root.
-    """
-    if not slugs:
-        return
-
-    status("Syncing generated blocks back to source ...")
-    for slug in slugs:
-        assembly_device = os.path.join(ASSEMBLY_DIR, "devices", slug)
-        source_device = os.path.join(REPO_ROOT, "devices", slug)
-        if not os.path.isdir(assembly_device) or not os.path.isdir(source_device):
-            continue
-        for root, _dirs, files in os.walk(assembly_device):
-            for fname in files:
-                asm_path = os.path.join(root, fname)
-                rel_path = os.path.relpath(asm_path, assembly_device)
-                src_path = os.path.join(source_device, rel_path)
-                if not os.path.isfile(src_path):
-                    continue
-                asm_content = open(asm_path).read()
-                src_content = open(src_path).read()
-                if asm_content != src_content:
-                    # Replace generated blocks in source with those from assembly
-                    asm_blocks = extract_generated_blocks(asm_content)
-                    if asm_blocks:
-                        src_lines = src_content.splitlines(keepends=True)
-                        src_blocks = extract_generated_blocks(src_content)
-                        # Simple approach: replace source file with assembly version
-                        # if only generated blocks differ
-                        with open(src_path, "w") as f:
-                            f.write(asm_content)
-                        status(f"  Synced generated blocks: devices/{slug}/{rel_path}")
-
-
 def run_generators(slugs, sync_generated=False, strict=False):
     """
     Run upstream generator scripts inside .assembly/.
@@ -903,7 +866,21 @@ def self_test_offline():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # 5. --strict turns a dead generator into a failed run; without it the
+    # 5. A function defined twice here is silently shadowed by its later
+    #    definition. That is how a stale, overwrite-everything copy of
+    #    sync_generated_back once survived next to the marker-scoped one and
+    #    quietly replaced it, so the guard above was never in effect.
+    import ast
+    with open(os.path.abspath(__file__), encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    defined = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+    duplicates = sorted({name for name in defined if defined.count(name) > 1})
+    if duplicates:
+        failures.append(f"function(s) defined twice, the later one wins: {duplicates}")
+    if sync_generated_back([]) != ([], []):
+        failures.append("sync_generated_back must return (written, refused)")
+
+    # 6. --strict turns a dead generator into a failed run; without it the
     #    failure is reported and the run continues, which is what let a ref
     #    bump report success while compiling stale device blocks.
     import contextlib
