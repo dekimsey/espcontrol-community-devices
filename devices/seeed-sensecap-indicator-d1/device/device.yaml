@@ -92,6 +92,9 @@ esphome:
   platformio_options:
     build_flags:
       - "-DESPCONTROL_MAX_GRID_SLOTS=9"
+      # Matches disabledCardTypes ["weather_forecast"] in the catalog: leave the
+      # forecast code out of the firmware too, not just the card picker.
+      - "-DESPCONTROL_DISABLE_WEATHER_FORECAST=1"
   on_boot:
     - priority: 800
       then:

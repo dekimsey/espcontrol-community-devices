@@ -86,6 +86,9 @@ esphome:
   platformio_options:
     build_flags:
       - "-DESPCONTROL_MAX_GRID_SLOTS=6"
+      # Matches disabledCardTypes ["weather_forecast"] in the catalog: leave the
+      # forecast code out of the firmware too, not just the card picker.
+      - "-DESPCONTROL_DISABLE_WEATHER_FORECAST=1"
     build_src_flags:
       # Keep C++ literals close to their functions on the S3 firmware image;
       # the modal code is large enough to otherwise trip Xtensa l32r range limits.
