@@ -67,7 +67,35 @@ def compute_stamp(repo_root=REPO_ROOT):
         digest.update(rel.encode("utf-8"))
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
+    # assemble.py offers the camera screensaver in the web UI on exactly the
+    # devices whose packages.yaml sets screensaver_camera_supported "true", so
+    # that list shapes the built bundle too. It lives in the packages.yaml
+    # files themselves, which carry the stamp, so it cannot be a file input.
+    digest.update(b"camera-screensaver-slugs-v1:")
+    digest.update(",".join(camera_supported_slugs(repo_root)).encode("utf-8"))
     return digest.hexdigest()[:STAMP_LEN]
+
+
+CAMERA_SUPPORTED_RE = re.compile(
+    r'^\s*screensaver_camera_supported:\s*"true"\s*$', re.MULTILINE)
+
+
+def camera_supported_slugs(repo_root=REPO_ROOT):
+    """Devices whose packages.yaml says the firmware has the camera screensaver."""
+    try:
+        with open(os.path.join(repo_root, "community", "devices.json")) as f:
+            slugs = json.load(f)["devices"]
+    except (OSError, ValueError, KeyError):
+        return []
+    found = []
+    for slug in slugs:
+        try:
+            with open(os.path.join(repo_root, "devices", slug, "packages.yaml")) as f:
+                if CAMERA_SUPPORTED_RE.search(f.read()):
+                    found.append(slug)
+        except OSError:
+            continue
+    return sorted(found)
 
 
 def packages_files(repo_root=REPO_ROOT):
