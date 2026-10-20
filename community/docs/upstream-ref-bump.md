@@ -214,6 +214,18 @@ python3 community/scripts/generate_docs.py
   file the generator rewrote outside them, printing the difference. Take
   regenerated blocks from `.assembly/devices/<slug>/device/sensors.yaml` by
   hand; never copy `.assembly/.../packages.yaml` over the repo's.
+- **The D1 and wireless tag carry a camera-screensaver shim.** They include
+  upstream's no-op `screen_camera_screensaver_disabled.yaml` stub instead of the
+  full file, plus `devices/<slug>/device/camera_screensaver_stub.yaml`, because
+  at v2.13.0 upstream's shared display code still names two ids (the
+  `camera_screensaver_transition_generation` global and the
+  `camera_screensaver_downloaded_image` artwork image) that only the full file
+  defines. If a bump's compile fails on one of them being **defined twice**,
+  upstream completed its stub: delete the shim files and the `camera_stub`
+  include from both `packages.yaml`. If it fails with **Couldn't find ID** for a
+  new `camera_screensaver_*` name, upstream added another reference: add that id
+  to both shim files. Neither changes what the web UI offers; that follows
+  `screensaver_camera_supported`.
 - **A device slug that is a prefix of another** (`…-tab5` / `…-tab5-v1`) is
   handled in `assemble.py`'s overlay glob and in `DEVICES_POLICY.md`'s `allowed`
   patterns — use `builds/<slug>.*yaml`, never `builds/<slug>*.yaml`.

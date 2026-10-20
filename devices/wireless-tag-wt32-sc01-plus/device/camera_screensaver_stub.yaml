@@ -1,0 +1,42 @@
+# =============================================================================
+# CAMERA SCREENSAVER STUB (community)
+# =============================================================================
+# This board does not support the camera screensaver: its quad PSRAM already has no
+# headroom for the screensaver's image buffers, so the web UI does not offer
+# Camera and the code is not built.
+# packages.yaml includes upstream's no-op stub (screen_camera_screensaver_
+# disabled.yaml) instead of the full file, but upstream's shared display code
+# still names two things only the full file defines. Define just those here,
+# as inert placeholders, so the config validates without the screensaver's
+# state, scripts, lvgl objects or full-screen image.
+#
+#   camera_screensaver_transition_generation   read/written in backlight.yaml
+#   camera_screensaver_downloaded_image        cancel_update() in display.yaml
+#                                              and screen_cover_art.yaml,
+#                                              reached only in CAMERA mode,
+#                                              which this board never enters
+#                                              (screensaver_camera_supported
+#                                              is "false")
+#
+# Leaving the camera code out saves flash and a little static RAM. It does not
+# free PSRAM: the full screensaver's image buffers are only allocated when a
+# download runs, which never happens on this board.
+#
+# REMOVE THIS FILE, and the camera_stub include in packages.yaml, once upstream's
+# screen_camera_screensaver_disabled.yaml defines these two ids itself. Until
+# then a duplicate-id error at ref-bump time is the cue to delete it.
+globals:
+  - id: camera_screensaver_transition_generation
+    type: uint32_t
+    initial_value: '0'
+
+artwork_image:
+  - url: "https://placehold.co/1x1/000000/000000.jpg"
+    id: camera_screensaver_downloaded_image
+    format: AUTO
+    type: RGB565
+    byte_order: LITTLE_ENDIAN
+    resize: 1x1
+    resize_mode: FIT
+    priority: COVER_ART
+    buffer_size: 1024
