@@ -233,7 +233,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           python3 community/scripts/ui_stamp.py --write
           if ! git diff --quiet -- 'devices/*/packages.yaml'; then
-            git add devices/
+            git add -- 'devices/*/packages.yaml'
             git commit -m "chore(devices): refresh the UI cache stamp"
             retry git push
           fi
