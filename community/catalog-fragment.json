@@ -498,7 +498,17 @@
             },
             "apiNavigateAction": true
           }
-        }
+        },
+        "capabilityGaps": [
+          {
+            "feature": "Camera screensaver",
+            "reason": "The camera mode is refused on this panel: at upstream v2.13.0 its factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare). The code is compiled in, but the option is withheld."
+          },
+          {
+            "feature": "Weather forecast card",
+            "reason": "The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's factory image already fills 3917407 of the 3932160-byte flash partition (99.6%, 14753 bytes spare) at upstream v2.13.0, and its runtime heap has not been measured with the forecast card and its details modal open."
+          }
+        ]
       }
     },
     "tuya-t3e": {
@@ -1196,7 +1206,15 @@
         "capabilityGaps": [
           {
             "feature": "Camera Cards",
-            "reason": "Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom for a second concurrent image-heavy transfer, so this device stays on the single-slot image pool."
+            "reason": "Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom for a second concurrent image-heavy transfer, so this device stays on the single-slot image pool: upstream's two-slot file, which adds a second image downloader, is not built for it."
+          },
+          {
+            "feature": "Camera screensaver",
+            "reason": "The camera mode is refused on this panel: quad PSRAM leaves no headroom for the camera screensaver's image buffer, which it needs on top of the single image slot this device keeps. The code is compiled in, but the option is withheld."
+          },
+          {
+            "feature": "Weather forecast card",
+            "reason": "The forecast card is compiled into this board's firmware but is withheld from the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it yet."
           }
         ],
         "public": {
