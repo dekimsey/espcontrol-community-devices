@@ -40,9 +40,6 @@
           "coverArtSquareOverlay": true,
           "dragMode": "displace",
           "dragAnimation": true,
-          "disabledCardTypes": [
-            "weather_forecast"
-          ],
           "screen": {
             "width": "55%",
             "aspect": "3/2"
@@ -208,9 +205,6 @@
           "coverArtSquareOverlay": true,
           "dragMode": "displace",
           "dragAnimation": true,
-          "disabledCardTypes": [
-            "weather_forecast"
-          ],
           "screen": {
             "width": "70%",
             "aspect": "5/3"
@@ -545,9 +539,6 @@
           "coverArtSquareOverlay": true,
           "dragMode": "displace",
           "dragAnimation": true,
-          "disabledCardTypes": [
-            "weather_forecast"
-          ],
           "screen": {
             "width": "55%",
             "aspect": "1/1"
@@ -887,9 +878,6 @@
           "coverArtSquareOverlay": true,
           "dragMode": "displace",
           "dragAnimation": true,
-          "disabledCardTypes": [
-            "weather_forecast"
-          ],
           "screen": {
             "width": "55%",
             "aspect": "1/1"
