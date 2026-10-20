@@ -31,6 +31,11 @@ substitutions:
   sensor_value_font: font_number_value
   padding: 14px
   radius: 8px
+  # Card curve presets: Small is the 60% default from card_curve.h, Medium
+  # stays at this radius so upstream's new Card Curve select leaves
+  # existing dashboards looking the same.
+  card_curve_small_radius: 5px
+  card_curve_medium_radius: 8px
   main_page_card_gap: "10"
   main_page_pad_top: "40"
   main_page_compact_pad_top: "4"
@@ -86,21 +91,21 @@ substitutions:
 packages:
   upstream_a:
     url: https://github.com/jtenniswood/espcontrol
-    ref: v2.12.1
+    ref: v2.13.0
     refresh: 1d
     files:
       - common/config/entity_names.yaml
   device: !include device/device.yaml
   upstream_b:
     url: https://github.com/jtenniswood/espcontrol
-    ref: v2.12.1
+    ref: v2.13.0
     refresh: 1d
     files:
       - common/assets/icons.yaml
   fonts_device: !include device/fonts.yaml
   upstream_c:
     url: https://github.com/jtenniswood/espcontrol
-    ref: v2.12.1
+    ref: v2.13.0
     refresh: 1d
     files:
       - common/theme/button.yaml
@@ -152,7 +157,7 @@ packages:
 
 # --- community hosting overrides ---
 web_server:
-  js_url: https://lamiskin.github.io/espcontrol-community-devices/webserver/www.js?device=${device_slug}&v=${firmware_version}&ui=12417b0547a7
+  js_url: https://lamiskin.github.io/espcontrol-community-devices/webserver/www.js?device=${device_slug}&v=${firmware_version}&ui=c1df4eb06ab0
 
 update:
   - id: !extend firmware_update
