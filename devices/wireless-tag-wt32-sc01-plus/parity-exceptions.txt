@@ -11,3 +11,13 @@
 # device intentionally stays on the single-slot pool.
 common/device/image_cards_2.yaml   # missing: no PSRAM headroom for a 2nd concurrent image slot (quad PSRAM board)
 common/device/image_cards_1.yaml   # extra: this device stays on the single-slot pool
+
+# The camera screensaver is not supported either: its image decode needs the
+# same concurrent-image headroom this quad-PSRAM board does not have, so
+# screensaver_camera_supported is "false" and the web UI does not offer Camera.
+# The code is also left out of the firmware (this saves flash and a little
+# static RAM, not PSRAM): it includes upstream's no-op stub plus
+# device/camera_screensaver_stub.yaml, which defines the two ids upstream's
+# shared display code still names but only the full file defines.
+common/device/screen_camera_screensaver.yaml            # missing: no PSRAM headroom for the camera screensaver's image buffer
+common/device/screen_camera_screensaver_disabled.yaml   # extra: upstream's no-op stub in its place

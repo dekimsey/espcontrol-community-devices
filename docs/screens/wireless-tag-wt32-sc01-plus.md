@@ -27,7 +27,7 @@ Confirmed by @jonnybergdahl ([#134](https://github.com/lamiskin/espcontrol-commu
 Quad PSRAM (every other community ESP32-S3 device has octal) leaves no headroom for a second concurrent image-heavy transfer, so this device stays on the single-slot image pool: upstream's two-slot file, which adds a second image downloader, is not built for it.
 :::
 ::: warning Camera screensaver not available
-The camera mode is refused on this panel: quad PSRAM leaves no headroom for the camera screensaver's image buffer, which it needs on top of the single image slot this device keeps. The code is compiled in, but the option is withheld.
+The camera screensaver is not supported on this panel and is left out of its firmware: quad PSRAM leaves no headroom for its image buffers, which it would need on top of the single image slot this device keeps.
 :::
 ::: warning Weather forecast card not available
 The forecast card is left out of this board's firmware (-DESPCONTROL_DISABLE_WEATHER_FORECAST) and is not offered in the web configurator: this panel's quad PSRAM is tight, and neither the card nor its details modal has been run on it.
