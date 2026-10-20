@@ -80,7 +80,6 @@ esphome:
   friendly_name: ${friendly_name}
   platformio_options:
     build_flags:
-      - "-DESPCONTROL_DISABLE_TODO=1"
       - "-DESPCONTROL_MAX_GRID_SLOTS=6"
     build_src_flags:
       # Keep C++ literals close to their functions on the S3 firmware image;

@@ -118,7 +118,6 @@ esphome:
   friendly_name: ${friendly_name}
   build_flags:
     - "-Wno-deprecated-declarations"
-    - "-DESPCONTROL_DISABLE_TODO=1"
     - "-DESPCONTROL_ESPHOME_2026_5_REBUILD=1"
     - "-DESPCONTROL_WAVESHARE_P4_101_20260701=1"
     - "-Wno-literal-suffix"
