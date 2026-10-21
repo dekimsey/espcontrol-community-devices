@@ -181,6 +181,19 @@ The helper resolves the model from ESPHome's DNS-SD import URL, checks the
 release manifest and OTA checksum, warns when the newest release is a preview,
 asks before uploading, and verifies the device version after reboot.
 
+By default it installs the newest published release, previews included. Pass
+`--stable` to install the newest non-prerelease release instead, for example to
+put a panel on the current stable build while a preview is newer:
+
+```bash
+python3 community/scripts/update_device.py --dry-run --stable YOUR_DEVICE_IP
+python3 community/scripts/update_device.py --stable YOUR_DEVICE_IP
+```
+
+If the selected release is older than the version already installed (for
+example moving a panel from a newer preview back to stable), it prints a
+downgrade warning before the confirmation prompt; it does not refuse.
+
 ## When a catalog flag needs setting
 
 Set it in `community/catalog-fragment.json` under the device's
