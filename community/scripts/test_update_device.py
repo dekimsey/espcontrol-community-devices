@@ -118,6 +118,73 @@ class ReleaseTests(unittest.TestCase):
             updater.verify_firmware(data, {}, "0" * 32)
 
 
+class StableSelectionTests(unittest.TestCase):
+    PREVIEW = {"tag_name": "p", "published_at": "2026-02-01T00:00:00Z", "prerelease": True}
+    STABLE = {"tag_name": "s", "published_at": "2026-01-01T00:00:00Z", "prerelease": False}
+    OLDER_STABLE = {"tag_name": "s0", "published_at": "2025-12-01T00:00:00Z", "prerelease": False}
+
+    def test_default_takes_newest_including_previews(self):
+        releases = [self.PREVIEW, self.STABLE, self.OLDER_STABLE]
+        self.assertIs(updater.select_release(releases), self.PREVIEW)
+
+    def test_stable_skips_previews_and_takes_newest_stable(self):
+        releases = [self.PREVIEW, self.STABLE, self.OLDER_STABLE]
+        self.assertIs(updater.select_release(releases, stable_only=True), self.STABLE)
+
+    def test_stable_with_only_previews_fails_closed(self):
+        with self.assertRaises(updater.UpdateError):
+            updater.select_release([self.PREVIEW], stable_only=True)
+
+    def test_version_ordering_ignores_upstream_and_puts_preview_before_stable(self):
+        older = updater.is_older_than
+        self.assertTrue(older("v0.14.0-upstream.v2.12.1", "v0.15.0-upstream.v2.13.0-preview.1"))
+        self.assertFalse(older("v0.15.0-upstream.v2.13.0-preview.1", "v0.14.0-upstream.v2.12.1"))
+        self.assertTrue(older("v0.15.0-upstream.v2.13.0-preview.1", "v0.15.0-upstream.v2.13.0"))
+        self.assertTrue(older("v0.15.0-upstream.v2.13.0-preview.1", "v0.15.0-upstream.v2.13.0-preview.2"))
+        self.assertFalse(older("v0.14.0-upstream.v2.12.1", "v0.14.0-upstream.v2.12.1"))
+        self.assertFalse(older("v0.14.0-upstream.v2.12.1", "dev"))
+        self.assertFalse(older("garbage", "v0.14.0-upstream.v2.12.1"))
+
+    def _run_main(self, argv, releases, installed="v0.15.0-upstream.v2.13.0-preview.1"):
+        artifact = {"tag": "x", "ota_name": SLUG + ".ota.bin", "manifest_url": "https://github.com/manifest",
+                    "ota_url": "https://github.com/ota", "ota_asset": {}}
+        with mock.patch.object(updater, "repository_coordinates", return_value=COORDINATES), \
+             mock.patch.object(updater, "device_registry", return_value=REGISTRY), \
+             mock.patch.object(updater, "discover", return_value={"slug": SLUG, "model": "Model", "mac": MAC, "version": installed}), \
+             mock.patch.object(updater, "published_releases", return_value=releases), \
+             mock.patch.object(updater, "release_artifact", return_value=artifact) as picked, \
+             mock.patch.object(updater, "_download", return_value=b"manifest"), \
+             mock.patch.object(updater, "validate_manifest", return_value=("v0.14.0-upstream.v2.12.1", None)), \
+             mock.patch.object(updater, "run_update") as upload, \
+             mock.patch("sys.stdout") as out:
+            status = updater.main(argv)
+        printed = "".join(call.args[0] for call in out.write.call_args_list if call.args)
+        return status, picked, upload, printed
+
+    def test_main_stable_dry_run_uses_stable_release_and_warns_on_downgrade(self):
+        releases = [dict(self.PREVIEW, assets=[]), dict(self.STABLE, assets=[])]
+        status, picked, upload, printed = self._run_main(["--dry-run", "--stable", IP], releases)
+        self.assertEqual(status, 0)
+        self.assertEqual(picked.call_args.args[1]["tag_name"], "s")
+        self.assertIn("Channel: stable", printed)
+        self.assertIn("downgrade", printed)
+        upload.assert_not_called()
+
+    def test_main_default_dry_run_still_uses_newest_release(self):
+        releases = [dict(self.PREVIEW, assets=[]), dict(self.STABLE, assets=[])]
+        status, picked, _upload, printed = self._run_main(["--dry-run", IP], releases)
+        self.assertEqual(status, 0)
+        self.assertEqual(picked.call_args.args[1]["tag_name"], "p")
+        self.assertNotIn("Channel: stable", printed)
+
+    def test_main_stable_with_no_stable_release_fails_before_any_download(self):
+        status, picked, upload, _printed = self._run_main(
+            ["--dry-run", "--stable", IP], [dict(self.PREVIEW, assets=[])])
+        self.assertEqual(status, 1)
+        picked.assert_not_called()
+        upload.assert_not_called()
+
+
 class SafetyTests(unittest.TestCase):
     def test_cancel_and_dry_run_do_not_invoke_upload(self):
         with mock.patch.object(updater, "repository_coordinates", return_value=COORDINATES), \

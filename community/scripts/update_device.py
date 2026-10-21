@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed OTA updater for one community ESPHome device.
 
-Usage: python3 community/scripts/update_device.py [--dry-run] <IP>
+Usage: python3 community/scripts/update_device.py [--dry-run] [--stable] <IP>
 
 Requires Linux ``avahi-browse``, Python 3, and ``curl`` for actual updates.
 Upload uses the firmware's HTTP ``/update`` handler and therefore requires a
@@ -14,6 +14,10 @@ must publish its official ``package_import_url`` and ``project_version`` TXT
 records. Dry-run resolves the device, fetches and validates the small release
 manifest, and shows the plan. It does not download firmware, verify firmware
 checksums, or connect to the device's OTA/API endpoint.
+
+By default the newest published release is selected, previews included.
+``--stable`` selects the newest non-prerelease release instead; it warns
+when that is older than the version already installed.
 """
 
 import argparse
@@ -403,9 +407,45 @@ def run_update(device, release, artifact, version, ip, coordinates, runner=subpr
     raise UpdateError(f"OTA command returned, but {ip} did not rediscover with version {version}; no retry or rollback attempted.")
 
 
+VERSION_RE = re.compile(
+    r"^v?(\d+)\.(\d+)\.(\d+)-upstream\.v\d+\.\d+\.\d+(?:-preview\.(\d+))?$")
+
+
+def select_release(releases, stable_only=False):
+    """Newest release (releases are sorted newest first), or the newest stable one."""
+    if not stable_only:
+        return releases[0]
+    for release in releases:
+        if not release.get("prerelease"):
+            return release
+    raise UpdateError("No stable (non-prerelease) release was found.")
+
+
+def community_version_key(version):
+    """Sort key for ``vX.Y.Z-upstream.vA.B.C[-preview.N]``, or None if unparseable.
+
+    The community version orders releases; a preview sorts before the stable
+    release that shares its X.Y.Z. The upstream version is deliberately ignored.
+    """
+    match = VERSION_RE.match(version or "")
+    if not match:
+        return None
+    major, minor, patch, preview = match.groups()
+    return (int(major), int(minor), int(patch),
+            0 if preview is not None else 1, int(preview or 0))
+
+
+def is_older_than(candidate, installed):
+    """True when both versions parse and ``candidate`` is older than ``installed``."""
+    left, right = community_version_key(candidate), community_version_key(installed)
+    return left is not None and right is not None and left < right
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="resolve target/release/artifact without downloading or uploading")
+    parser.add_argument("--stable", action="store_true",
+                        help="select the newest stable (non-prerelease) release instead of the newest release, previews included")
     parser.add_argument("ip", help="single target device IPv4 address (IPv6 is not supported)")
     args = parser.parse_args(argv)
     try:
@@ -419,15 +459,20 @@ def main(argv=None):
         releases = published_releases(coordinates)
         if not releases:
             raise UpdateError("No published GitHub releases were found.")
-        release = releases[0]
+        release = select_release(releases, stable_only=args.stable)
         artifact = release_artifact(device["slug"], release, coordinates)
         print(f"Target: {ip} | {device['slug']} ({device['model']}) | MAC {device['mac']}")
         print(f"Installed: {device['version']} | Release: {release['tag_name']} ({release['published_at']})")
         if release.get("prerelease"):
             print("WARNING: selected release is a PREVIEW/prerelease.")
+        elif args.stable:
+            print("Channel: stable (previews skipped).")
         manifest_raw = _download(artifact["manifest_url"])
         version, md5 = validate_manifest(manifest_raw, device["slug"], artifact["tag"], coordinates)
         print(f"Selected version: {version} | OTA artifact: {artifact['ota_name']}")
+        if is_older_than(version, device["version"]):
+            print(f"WARNING: {version} is OLDER than the installed {device['version']}; "
+                  "this would be a downgrade.")
         if args.dry_run:
             print("Dry run: manifest validated; firmware checksums not verified; no firmware binary downloaded or uploaded.")
             return 0
